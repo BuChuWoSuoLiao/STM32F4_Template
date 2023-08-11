@@ -1,6 +1,6 @@
 #include "sys.h"
-#include "usart.h"	
-////////////////////////////////////////////////////////////////////////////////// 	 
+#include "usart.h"	 
+#include "string.h"
 //如果使用ucos,则包括下面的头文件即可.
 #if SYSTEM_SUPPORT_OS
 #include "includes.h"					//ucos 使用	  
@@ -32,17 +32,20 @@ int fputc(int ch, FILE *f)
 #endif
  
 #if EN_USART1_RX   //如果使能了接收
-//串口1中断服务程序
-//注意,读取USARTx->SR能避免莫名其妙的错误   	
-u8 USART_RX_BUF[USART_REC_LEN];     //接收缓冲,最大USART_REC_LEN个字节.
+
+//接收缓冲,最大USART_REC_LEN个字节.
+char USART_RX_BUF[USART_REC_LEN];     
 //接收状态
 //bit15，	接收完成标志
 //bit14，	接收到0x0d
 //bit13~0，	接收到的有效字节数目
 u16 USART_RX_STA=0;       //接收状态标记	
+uint8_t USART_RX_Index = 0;	// 接收字节索引
 
-//初始化IO 串口1 
-//bound:波特率
+/************************************
+1. 初始化IO 串口
+2. bound:	特率
+************************************/
 void uart_init(u32 bound){
    //GPIO端口设置
 	GPIO_InitTypeDef GPIO_InitStructure;
@@ -75,7 +78,6 @@ void uart_init(u32 bound){
 	
 	USART_Cmd(USART1, ENABLE);  //使能串口1 
 	
-	//USART_ClearFlag(USART1, USART_FLAG_TC);
 	
 #if EN_USART1_RX	
 	USART_ITConfig(USART1, USART_IT_RXNE, ENABLE);//开启相关中断
@@ -86,11 +88,8 @@ void uart_init(u32 bound){
 	NVIC_InitStructure.NVIC_IRQChannelSubPriority =3;		//子优先级3
 	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;			//IRQ通道使能
 	NVIC_Init(&NVIC_InitStructure);	//根据指定的参数初始化VIC寄存器、
-
 #endif
-	
 }
-
 
 /************************************
 1. 串口发送单个字符
@@ -150,7 +149,7 @@ uint32_t USART_Pow(uint32_t X,uint32_t Y)
 
 
 /************************************
-1. 串口发送数字
+1. 串口发送数组
 2. USARTx	:	串口号
 3. *String	:	发送的数据
 4. Lenght : 数据长度
@@ -165,34 +164,47 @@ void USART_SendNumber(USART_TypeDef* USARTx, uint32_t Number,uint8_t Lenght)
 }
 
 
-void USART1_IRQHandler(void)                	//串口1中断服务程序
+/************************************
+1. 串口1中断服务程序
+************************************/
+void USART1_IRQHandler(void)                	
 {
-	u8 Res;
+//	u8 Res;
 #if SYSTEM_SUPPORT_OS 		//如果SYSTEM_SUPPORT_OS为真，则需要支持OS.
 	OSIntEnter();    
 #endif
-	if(USART_GetITStatus(USART1, USART_IT_RXNE) != RESET)  //接收中断(接收到的数据必须是0x0d 0x0a结尾)
+	// 接收到的一字节数据
+	uint8_t recv_dat;
+	// 静态变量，表示当前接受状态
+	static uint8_t recv_state = 0;
+	if(USART_GetITStatus(USART1, USART_IT_RXNE) != RESET)  //接收中断
 	{
-		Res =USART_ReceiveData(USART1);//(USART1->DR);	//读取接收到的数据
+		// 将接收到的数据放入 recv_dat 中
+		recv_dat = USART_ReceiveData(USART1);
 		
-		if((USART_RX_STA&0x8000)==0)//接收未完成
-		{
-			if(USART_RX_STA&0x4000)//接收到了0x0d
-			{
-				if(Res!=0x0a)USART_RX_STA=0;//接收错误,重新开始
-				else USART_RX_STA|=0x8000;	//接收完成了 
-			}
-			else //还没收到0X0D
-			{	
-				if(Res==0x0d)USART_RX_STA|=0x4000;
-				else
-				{
-					USART_RX_BUF[USART_RX_STA&0X3FFF]=Res ;
-					USART_RX_STA++;
-					if(USART_RX_STA>(USART_REC_LEN-1))USART_RX_STA=0;//接收数据错误,重新开始接收	  
-				}		 
-			}
-		}   		 
+		switch(recv_state) {
+			case 0:	// 接收到帧头
+				if(recv_dat == 0xFE){
+					recv_state = 1;
+					USART_RX_Index = 0;	// 重置数据缓冲区索引
+				}else{
+					recv_state = 0;	
+				}
+				break;
+			case 1:	// 接受数据
+				USART_RX_BUF[USART_RX_Index] = recv_dat;
+				USART_RX_Index++;
+				if(USART_RX_Index >= 4) {
+					recv_state = 2;
+				}
+				break;
+			case 2:	// 接收到帧尾
+				if(recv_dat == 0xEF) {
+					USART_RX_STA = 1;	// 设置标志为1，表示数据接受完成
+					recv_state = 0;
+				}
+				break;
+		}
   } 
 #if SYSTEM_SUPPORT_OS 	//如果SYSTEM_SUPPORT_OS为真，则需要支持OS.
 	OSIntExit();  											 
