@@ -183,7 +183,7 @@ void USART1_IRQHandler(void)
 		
 		switch(recv_state) {
 			case 0:
-				if(recv_dat == 0xFE){
+				if((recv_dat == '$') && !USART_RX_STA){	// 防止接收频率过高，处理完成在进行下一次接收
 					recv_state = 1;
 					USART_RX_Index = 0;
 				}else{
@@ -191,14 +191,15 @@ void USART1_IRQHandler(void)
 				}
 				break;
 			case 1:
-				USART_RX_BUF[USART_RX_Index] = recv_dat;
-				USART_RX_Index++;
-				if(USART_RX_Index >= 4) {
+				if(recv_dat == '\r'){	// 接收到 \r 时表示接收完成
 					recv_state = 2;
+				}else{
+					USART_RX_BUF[USART_RX_Index] = recv_dat;
+					USART_RX_Index++;
 				}
 				break;
 			case 2:
-				if(recv_dat == 0xEF) {
+				if(recv_dat == '\n') {
 					USART_RX_STA = 1;
 					recv_state = 0;
 				}

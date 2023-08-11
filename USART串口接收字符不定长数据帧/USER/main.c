@@ -14,8 +14,10 @@ int main(void)
 		
 		if(USART_RX_STA == 1) {
 			// ÖØÖÃ×´Ì¬
-			USART_RX_STA = 0;
 			printf(USART_RX_BUF);
+			// Çå³ý»º³åÇø
+			memset(USART_RX_BUF, 0, sizeof(USART_RX_BUF));
+			USART_RX_STA = 0;
 		}
 	}
 }
